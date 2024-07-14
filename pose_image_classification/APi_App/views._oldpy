@@ -1,0 +1,494 @@
+import os.path
+import cv2
+from django.shortcuts import render
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
+from text_classification_inference import text_inference
+from train import *
+from inference import *
+from training_image import *
+from inference_image import *
+from text_classification_train import *
+from train_audio import *
+from inference_audio import *
+from django.core.files.storage import FileSystemStorage
+training_dir = "static/data/training/"
+validation_dir = "static/data/validation/"
+
+
+@csrf_exempt
+def get_classes_list(request):
+    try:
+        class_names_list = os.listdir(f"{training_dir}")
+        context = {
+            "status": "success",
+            "class_names_list": class_names_list
+        }
+        return JsonResponse(context)
+
+    except Exception as e:
+        context = {
+            "status": "failed",
+            "error": str(e)
+        }
+        return JsonResponse(context)
+
+
+@csrf_exempt
+def create_classes_api(request):
+    if request.method == 'POST' and request.POST.get("main_flag") is not None and request.POST.get("classes") is not None and request.POST.get("classes") != "" and request.POST.get("main_flag") != "":
+        try:
+            class_list = []
+            main_flag = request.POST.get("main_flag")
+            classes = request.POST.get("classes").split(",")
+            delete_all(training_dir)
+            delete_all(validation_dir)
+            for i in range(len(classes)):
+                dir_name = classes[i].strip()
+                if main_flag == "image_classification" and dir_name != "":
+                    os.makedirs(f"{training_dir}{dir_name}", exist_ok=True)
+                    os.makedirs(f"{validation_dir}{dir_name}", exist_ok=True)
+                    class_list.append(dir_name)
+                elif main_flag == "pose_classification" and dir_name != "":
+                    os.makedirs(f"{training_dir}{dir_name}", exist_ok=True)
+                    class_list.append(dir_name)
+                elif main_flag == "audio_classification" and dir_name != "":
+                    os.makedirs(f"{training_dir}{dir_name}", exist_ok=True)
+                    class_list.append(dir_name)
+                else:
+                    pass
+
+            context = {
+                "status": "success",
+                "class_list": class_list
+            }
+            return JsonResponse(context)
+
+        except Exception as e:
+            context = {
+                "status": "failed",
+                "error": str(e)
+            }
+            return JsonResponse(context)
+    else:
+        context = {
+            "status": "failed",
+            "error": "request type should be POST and provide all values of input parameters."
+        }
+        return JsonResponse(context)
+
+
+@csrf_exempt
+def upload_data_api(request):
+    if request.method == 'POST':
+        try:
+            main_flag = request.POST.get("main_flag")
+            class_name = request.POST.get("class_name")
+            # check_training_class = os.path.isdir(f"{training_dir}{class_name}")
+            # check_validation_class = os.path.isdir(f"{validation_dir}{class_name}")
+            if main_flag == 'text_classification':
+                csv_file = request.FILES.get("images_list")
+                os.remove("static/train_text.csv")
+                csv_file_save_path = f"static/train_text.csv"
+                fs = FileSystemStorage()
+                file = fs.save(csv_file_save_path, csv_file)
+            else:
+                images_list = request.FILES.getlist("images_list")
+                for i in range(len(images_list)):
+                    if main_flag == "image_classification":
+                        if i % 4 == 0 and i != 0:
+                            fs = FileSystemStorage()
+                            file = fs.save(f"{validation_dir}{class_name}/{i}.jpg", images_list[i])
+                        else:
+                            fs = FileSystemStorage()
+                            file = fs.save(f"{training_dir}{class_name}/{i}.jpg", images_list[i])
+                    elif main_flag == "pose_classification":
+                        fs = FileSystemStorage()
+                        file = fs.save(f"{training_dir}{class_name}/{i}.jpg", images_list[i])
+
+                    elif main_flag == "audio_classification" and images_list[i].name.endswith(".wav"):
+                        fs = FileSystemStorage()
+                        file = fs.save(f"{training_dir}{class_name}/{i}.wav", images_list[i])
+                    else:
+                        pass
+
+            context = {
+                "status": "success",
+            }
+            return JsonResponse(context)
+
+        except Exception as e:
+            context = {
+                "status": "failed",
+                "error": str(e)
+            }
+            return JsonResponse(context)
+    else:
+        context = {
+            "status": "failed",
+            "error": "request type should be POST"
+        }
+        return JsonResponse(context)
+
+
+@csrf_exempt
+def index(request):
+    if request.method == 'POST':
+        try:
+            main_flag = request.POST.get("main_flag")
+            if main_flag == 'pose_classification':
+
+                flag = request.POST.get("flag")
+
+                ###################
+                if flag == 'train':
+                    if os.path.exists(training_dir):
+                        response_str = train(training_dir)
+                        context = {
+                            "status": "success",
+                            "Test Accuracy": response_str
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Dataset does not exist"
+                        }
+                elif flag == 'test':
+                    try:
+                        if request.FILES.get("image") is not None:
+                            csv_path = 'static/data.csv'
+                            image = request.FILES.get("image")
+                            delete_files_in_directory('static/input_images')
+
+                            fs = FileSystemStorage()
+                            image_path = 'static/input_images/test.jpg'
+                            file = fs.save(image_path, image)
+
+                            if os.path.exists(csv_path) and os.path.exists(image_path):
+                                image = cv2.imread(image_path)
+                                class_res = test_image(csv_path, image)
+                                context = {
+                                    "status": "success",
+                                    "Predicted Class": class_res
+                                }
+                            else:
+                                context = {
+                                    "status": "failed",
+                                    "Reason": "Either data path or image path does not exist"
+                                }
+
+                        else:
+                            context = {
+                                "status": "failed",
+                                "Reason": "Either data path or image path does not exist. Please select image file"
+                            }
+                    except:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Pose Not Detected"
+                        }
+
+                elif flag == 'export':
+                    model_path = 'static/final_model.h5'
+                    host = request.get_host()
+                    if os.path.exists(model_path):
+                        context = {
+                            "status": "success",
+                            "Model": f"Download at {host}/{model_path}",
+                            "Data": f"Download at {host}/static/data.csv"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Model does not exist."
+                        }
+
+                else:
+                    context = {
+                        "status": "failed",
+                        "Reason": "Invalid Flag"
+                    }
+                ##################
+
+                return JsonResponse(context)
+            elif main_flag == 'image_classification':
+                flag = request.POST.get("flag")
+                if flag == 'train':
+                    classification_data = 'static/data/'
+                    if os.path.exists(classification_data):
+                        acc = train_image_classification(classification_data)
+                        context = {
+                            "status": "success",
+                            "Test Accuracy": acc
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Data not Found"
+                        }
+                elif flag == 'test':
+                    try:
+                        if request.FILES.get("image") is not None:
+                            classification_data = 'static/data/'
+                            image = request.FILES.get("image")
+                            delete_files_in_directory('static/input_images')
+
+                            fs = FileSystemStorage()
+                            image_path = 'static/input_images/test.jpg'
+                            file = fs.save(image_path, image)
+
+                            if os.path.exists(classification_data) and os.path.exists(image_path):
+
+                                class_res = predict_image_class(image_path)
+                                context = {
+                                    "status": "success",
+                                    "Predicted Class": class_res
+                                }
+                            else:
+                                context = {
+                                    "status": "failed",
+                                    "Reason": "Either data path or image path does not exist"
+                                }
+
+                        else:
+                            context = {
+                                "status": "failed",
+                                "Reason": "Either data path or image path does not exist. Please select image file"
+                            }
+                    except Exception as e:
+                        context = {
+                            "status": "failed",
+                            "Reason": str(e)
+                        }
+
+                elif flag == 'export':
+                    model_path = 'static/image_classification_model.pkl'
+                    host = request.get_host()
+                    if os.path.exists(model_path):
+                        context = {
+                            "status": "success",
+                            "Model": f"Download at {host}/{model_path}"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Model does not exist."
+                        }
+
+                else:
+                    context = {
+                        "status": "failed",
+                        "Reason": "Invalid Flag"
+                    }
+                return JsonResponse(context)
+            elif main_flag == 'text_classification':
+                flag = request.POST.get("flag")
+                if flag == 'train':
+                    classification_data = 'static/train_text.csv'
+                    if os.path.exists(classification_data):
+                        text_train(classification_data)
+                        context = {
+                            "status": "success"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Data not Found"
+                        }
+                elif flag == 'test':
+                    try:
+                        if request.POST.get("text") is not None:
+                            classification_data = 'static/train_text.csv'
+                            input_text = request.POST.get("text")
+
+                            if os.path.exists(classification_data):
+
+                                res_status, class_res = text_inference(input_text)
+                                if res_status is True:
+                                    context = {
+                                        "status": "success",
+                                        "Predicted Class": class_res
+                                    }
+                                else:
+                                    context = {
+                                        "status": "failed",
+                                        "Predicted Class": class_res
+                                    }
+                            else:
+                                context = {
+                                    "status": "failed",
+                                    "Reason": "data path does not exist"
+                                }
+                        else:
+                            context = {
+                                "status": "failed",
+                                "Reason": "Please give input text."
+                            }
+                    except Exception as e:
+                        context = {
+                            "status": "failed",
+                            "Reason": f"{str(e)}"
+                        }
+                    return JsonResponse(context)
+                elif flag == 'export':
+                    model_path = "static/text_classification_model"
+                    zip_directory(model_path, f"{model_path}.zip")
+                    host = request.get_host()
+
+                    if os.path.exists(model_path):
+                        context = {
+                            "status": "success",
+                            "Model": f"Download at {host}/{model_path}.zip",
+                            "Classes": f"Download at {host}/static/train_text_classes.json"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Model does not exist."
+                        }
+                else:
+                    context = {
+                        "status": "failed",
+                        "Reason": "Invalid Flag"
+                    }
+                return JsonResponse(context)
+            elif main_flag == 'audio_classification':
+                flag = request.POST.get("flag")
+                if flag == 'train':
+                    classification_data = 'static/data/training/'
+                    if os.path.exists(classification_data):
+                        create_dataset_audio(classification_data)
+                        status, response = main_audio_train(classification_data)
+                        context = {
+                            "status": "success"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Data not Found"
+                        }
+                    return JsonResponse(context)
+                elif flag == 'test':
+                    try:
+                        if request.FILES.get("image") is not None:
+                            classification_data = 'static/data/training/'
+                            model_path = 'static/weights/audio_model.h5'
+                            input_file = request.FILES.get("image")
+
+                            fs = FileSystemStorage()
+                            delete_files_in_directory('static/input_audios')
+                            audio_path = 'static/input_audios/test.wav'
+                            file = fs.save(audio_path, input_file)
+
+                            if os.path.exists(classification_data) and os.path.exists(audio_path) and os.path.exists(model_path):
+
+                                res_status, class_res = inference_audio_file(classification_data, model_path, audio_path)
+                                if res_status is True:
+                                    context = {
+                                        "status": "success",
+                                        "Predicted Class": class_res
+                                    }
+                                else:
+                                    context = {
+                                        "status": "failed",
+                                        "Predicted Class": class_res
+                                    }
+                            else:
+                                context = {
+                                    "status": "failed",
+                                    "Reason": "paths does not exist"
+                                }
+                        else:
+                            context = {
+                                "status": "failed",
+                                "Reason": "Please give input text."
+                            }
+                    except Exception as e:
+                        context = {
+                            "status": "failed",
+                            "Reason": f"{str(e)}"
+                        }
+                    # return JsonResponse(context)
+                elif flag == 'export':
+                    model_path = 'static/weights/audio_model.h5'
+                    host = request.get_host()
+                    if os.path.exists(model_path):
+                        context = {
+                            "status": "success",
+                            "Model": f"Download at {host}/{model_path}",
+                            "Data": f"Download at {host}/static/dataset/data.csv",
+                            "Classes": f"Download at {host}/static/dataset/classes.txt"
+                        }
+                    else:
+                        context = {
+                            "status": "failed",
+                            "Reason": "Model does not exist."
+                        }
+                else:
+                    context = {
+                        "status": "failed",
+                        "Reason": "Invalid Flag"
+                    }
+                return JsonResponse(context)
+        except Exception as e:
+            context = {
+                "status": "failed",
+                "error": str(e)
+            }
+            return JsonResponse(context)
+    else:
+        context = {
+            "status": "failed",
+            "error": "request type should be POST"
+        }
+        return JsonResponse(context)
+
+
+import zipfile
+
+
+def zip_directory(directory_path, zip_path):
+    """
+    Zip the contents of an entire directory (with that directory included in the archive).
+
+    :param directory_path: The path to the directory to zip
+    :param zip_path: The path to the output zip file
+    """
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Walk through the directory
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                # Create the full filepath by joining root directory with file name
+                file_path = os.path.join(root, file)
+                # Add file to zip with the correct archive name
+                archive_name = os.path.relpath(file_path, start=directory_path)
+                zipf.write(file_path, archive_name)
+
+
+def delete_files_in_directory(directory):
+    # List all files in the directory
+    files = os.listdir(directory)
+    # Iterate over each file and delete it
+    for file in files:
+        file_path = os.path.join(directory, file)
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"Deleted file: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
+
+
+def delete_all(directory):
+    # List all files in the directory
+    files = os.listdir(directory)
+    # Iterate over each file and delete it
+    for file in files:
+        file_path = os.path.join(directory, file)
+        try:
+            # if os.path.isfile(file_path):
+            shutil.rmtree(file_path)
+            print(f"Deleted file: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")

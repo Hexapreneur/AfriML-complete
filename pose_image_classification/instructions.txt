@@ -1,0 +1,11 @@
+Make sure you have python 3.8 installed in your system
+
+In you python environment enter command
+
+pip install -r requirements.txt
+
+This will install all the dependencies in your system and you can run the API.
+
+To run the api simply enter the below command in terminal
+
+python manage.py runserver
